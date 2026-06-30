@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>太空小蜜蜂 - 火箭任務版</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            border: 2px solid #00f;
+            box-shadow: 0 0 25px rgba(0, 0, 255, 0.4);
+        }
+
+        canvas {
+            display: block;
+            background-color: #000;
+        }
+
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 15px;
+            right: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 18px;
+            pointer-events: none;
+            color: #0ff;
+            text-shadow: 0 0 8px #00f;
+        }
+
+        #pause-btn {
+            position: absolute;
+            top: 45px;
+            right: 15px;
+            background: rgba(0, 0, 255, 0.1);
+            border: 1px solid #0ff;
+            color: #0ff;
+            cursor: pointer;
+            padding: 5px 12px;
+            font-family: inherit;
+            pointer-events: auto;
+            z-index: 20;
+            transition: 0.2s;
+        }
+        #pause-btn:hover { background: #00f; color: #fff; }
+
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            z-index: 30;
+        }
+
+        h1 { color: #f00; font-size: 42px; margin: 0; text-shadow: 0 0 15px #f00; }
+        .demo-tag { color: #ff0; font-size: 22px; margin-top: 10px; text-shadow: 0 0 10px #aa0; }
+        p { font-size: 16px; margin: 15px 0; color: #0ff; }
+        
+        .btn-group { display: flex; gap: 15px; }
+
+        button.main-btn {
+            background: transparent;
+            color: #0ff;
+            border: 2px solid #0ff;
+            padding: 12px 25px;
+            font-size: 18px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: 0.3s;
+        }
+
+        button.main-btn:hover {
+            background: #0ff;
+            color: #000;
+            box-shadow: 0 0 20px #0ff;
+        }
+
+        .hidden { display: none !important; }
+
+        #level-msg {
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            top: 40%;
+            font-size: 60px;
+            color: #fff;
+            text-shadow: 0 0 25px #0ff;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+        
+        #pause-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 50px;
+            color: #fff;
+            text-shadow: 0 0 20px #f00;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="ui">
+            <div>LEVEL: <span id="level-display">1</span></div>
+            <div>SCORE: <span id="score">0</span></div>
+            <div>LIVES: <span id="lives">3</span></div>
+        </div>
+
+        <button id="pause-btn" class="hidden">暫停 (P)</button>
+        <div id="pause-indicator" class="hidden">已暫停</div>
+        <div id="level-msg">LEVEL 1</div>
+
+        <canvas id="gameCanvas"></canvas>
+
+        <div id="overlay">
+            <h1 id="status-title">太空小蜜蜂：火箭任務</h1>
+            <div id="demo-indicator" class="demo-tag hidden">DEMO MODE</div>
+            <p id="status-desc">方向鍵：左右移動 | 空白鍵：發射子彈<br>擊落 UFO 並挑戰 3 個關卡</p>
+            <div class="btn-group">
+                <button id="start-btn" class="main-btn">開始遊戲</button>
+                <button id="demo-btn" class="main-btn" style="border-color: #ff0; color: #ff0;">自動 Demo</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const livesEl = document.getElementById('lives');
+        const levelEl = document.getElementById('level-display');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('start-btn');
+        const demoBtn = document.getElementById('demo-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const statusTitle = document.getElementById('status-title');
+        const statusDesc = document.getElementById('status-desc');
+        const levelMsg = document.getElementById('level-msg');
+        const pauseIndicator = document.getElementById('pause-indicator');
+        const demoIndicator = document.getElementById('demo-indicator');
+
+        canvas.width = 800;
+        canvas.height = 600;
+
+        let score = 0;
+        let lives = 3;
+        let currentLevel = 1;
+        let gameRunning = false;
+        let isPaused = false;
+        let isDemoMode = false;
+        let isTransitioning = false;
+        let frameCount = 0;
+        
+        let enemies = [];
+        let playerBullets = [];
+        let enemyBullets = [];
+        let particles = [];
+        let keys = {};
+
+        const player = {
+            width: 40,
+            height: 60, // 為了配合火箭長形
+            x: canvas.width / 2 - 20,
+            y: canvas.height - 80,
+            speed: 7,
+            color: '#00f'
+        };
+
+        // --- 繪圖函數 ---
+
+        // 根據圖片繪製火箭
+        function drawRocket(x, y, w, h, color) {
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 8;
+            ctx.shadowColor = color;
+
+            const cx = x + w / 2;
+            const cy = y;
+
+            // 1. 火箭主體 (Body)
+            ctx.beginPath();
+            ctx.moveTo(cx, cy); // 頂尖
+            // 右側弧線
+            ctx.quadraticCurveTo(x + w, cy + h * 0.7, x + w * 0.8, cy + h * 0.85);
+            // 底部
+            ctx.lineTo(x + w * 0.2, cy + h * 0.85);
+            // 左側弧線
+            ctx.quadraticCurveTo(x, cy + h * 0.7, cx, cy);
+            ctx.stroke();
+
+            // 2. 圓形窗戶 (Window)
+            ctx.beginPath();
+            ctx.arc(cx, cy + h * 0.45, w * 0.18, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 3. 左機翼 (Left Fin)
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.22, cy + h * 0.55);
+            ctx.quadraticCurveTo(x - w * 0.2, cy + h * 0.75, x + w * 0.15, cy + h * 0.9);
+            ctx.lineTo(x + w * 0.22, cy + h * 0.85);
+            ctx.stroke();
+
+            // 4. 右機翼 (Right Fin)
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.78, cy + h * 0.55);
+            ctx.quadraticCurveTo(x + w * 1.2, cy + h * 0.75, x + w * 0.85, cy + h * 0.9);
+            ctx.lineTo(x + w * 0.78, cy + h * 0.85);
+            ctx.stroke();
+
+            // 5. 噴射火焰 (Flame) - 隨時間閃爍
+            if (gameRunning && !isPaused && frameCount % 6 < 4) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#f80'; // 橘色火焰
+                ctx.shadowColor = '#f80';
+                ctx.moveTo(cx - 5, cy + h * 0.85);
+                ctx.lineTo(cx, cy + h * (1.0 + Math.random() * 0.2));
+                ctx.lineTo(cx + 5, cy + h * 0.85);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        // 繪製 UFO 敵艦
+        function drawUFO(x, y, width, height, color) {
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 5;
+            ctx.shadowColor = color;
+            const centerX = x + width / 2;
+            const centerY = y + height / 2;
+            ctx.beginPath(); // Dome
+            ctx.arc(centerX, y + height * 0.4, width * 0.25, Math.PI, 0); ctx.stroke();
+            ctx.beginPath(); // Body
+            ctx.ellipse(centerX, centerY + 2, width * 0.5, height * 0.3, 0, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); // Bottom
+            ctx.arc(centerX, centerY - 2, width * 0.4, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke();
+            [centerX - width * 0.25, centerX, centerX + width * 0.25].forEach(dotX => {
+                ctx.beginPath(); ctx.arc(dotX, centerY + 2, 2, 0, Math.PI * 2); ctx.stroke();
+            });
+            ctx.restore();
+        }
+
+        // --- 遊戲邏輯 ---
+
+        function initEnemies(level) {
+            enemies = [];
+            const rows = 3 + level;
+            const cols = 10;
+            const speed = 0.9 + (level * 0.7);
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    enemies.push({
+                        x: 80 + j * 65, y: 50 + i * 45,
+                        width: 40, height: 30,
+                        alive: true, direction: 1, speed: speed
+                    });
+                }
+            }
+        }
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 15; i++) {
+                particles.push({
+                    x, y, vx: (Math.random() - 0.5) * 10, vy: (Math.random() - 0.5) * 10,
+                    life: 1.0, decay: Math.random() * 0.05 + 0.02, color
+                });
+            }
+        }
+
+        function shoot() {
+            if (playerBullets.length < 5) {
+                playerBullets.push({ x: player.x + player.width/2, y: player.y, speed: 10 });
+            }
+        }
+
+        function runDemoAI() {
+            if (!isDemoMode) return;
+            const activeEnemies = enemies.filter(e => e.alive);
+            if (activeEnemies.length > 0) {
+                // 瞄準最近的敵人
+                const target = activeEnemies.reduce((prev, curr) => (prev.y > curr.y) ? prev : curr);
+                const centerX = target.x + target.width / 2;
+                if (player.x + player.width/2 < centerX - 5) player.x += player.speed;
+                else if (player.x + player.width/2 > centerX + 5) player.x -= player.speed;
+                if (frameCount % 18 === 0) shoot();
+            }
+            // 躲避子彈
+            enemyBullets.forEach(b => {
+                if (Math.abs(b.x - (player.x + player.width/2)) < 40 && b.y > player.y - 120) {
+                    player.x += (b.x > player.x + player.width/2) ? -player.speed : player.speed;
+                }
+            });
+        }
+
+        function update() {
+            if (!gameRunning) return;
+            if (isPaused) { requestAnimationFrame(update); return; }
+
+            frameCount++;
+
+            if (isDemoMode) runDemoAI();
+            else {
+                if (keys['ArrowLeft'] && player.x > 0) player.x -= player.speed;
+                if (keys['ArrowRight'] && player.x < canvas.width - player.width) player.x += player.speed;
+            }
+            player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+
+            // 子彈移動
+            playerBullets.forEach((b, bi) => {
+                b.y -= b.speed;
+                if (b.y < 0) playerBullets.splice(bi, 1);
+                enemies.forEach(e => {
+                    if (e.alive && isColliding(b, e)) {
+                        e.alive = false; playerBullets.splice(bi, 1);
+                        score += 100; scoreEl.innerText = score;
+                        createExplosion(e.x + e.width/2, e.y + e.height/2, '#f00');
+                    }
+                });
+            });
+
+            // 敵軍移動
+            let edge = false;
+            let aliveCount = 0;
+            enemies.forEach(e => {
+                if (e.alive) {
+                    aliveCount++;
+                    e.x += e.direction * e.speed;
+                    if (e.x <= 10 || e.x + e.width >= canvas.width - 10) edge = true;
+                    if (isColliding(player, e)) gameOver();
+                }
+            });
+            if (edge) { enemies.forEach(e => { e.direction *= -1; e.y += 20; }); }
+            if (aliveCount === 0 && !isTransitioning) nextLevel();
+
+            // 敵軍射擊
+            const chance = 0.006 + (currentLevel * 0.012);
+            if (Math.random() < chance) {
+                const alives = enemies.filter(e => e.alive);
+                if (alives.length) {
+                    const s = alives[Math.floor(Math.random() * alives.length)];
+                    enemyBullets.push({ x: s.x + s.width/2, y: s.y + s.height, speed: 4 + currentLevel, width: 4, height: 12 });
+                }
+            }
+
+            enemyBullets.forEach((b, i) => {
+                b.y += b.speed;
+                if (b.y > canvas.height) enemyBullets.splice(i, 1);
+                if (isColliding(player, b)) {
+                    enemyBullets.splice(i, 1);
+                    if (!isDemoMode) lives--;
+                    livesEl.innerText = lives;
+                    createExplosion(player.x + player.width/2, player.y + player.height/2, '#00f');
+                    if (lives <= 0) gameOver();
+                }
+            });
+
+            particles.forEach((p, i) => {
+                p.x += p.vx; p.y += p.vy; p.life -= p.decay;
+                if (p.life <= 0) particles.splice(i, 1);
+            });
+
+            draw();
+            requestAnimationFrame(update);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 畫玩家火箭
+            drawRocket(player.x, player.y, player.width, player.height, player.color);
+
+            // 畫敵軍 UFO
+            enemies.forEach(e => { if (e.alive) drawUFO(e.x, e.y, e.width, e.height, '#f00'); });
+
+            // 畫子彈
+            ctx.shadowBlur = 10;
+            ctx.strokeStyle = '#0ff'; playerBullets.forEach(b => { ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x, b.y - 12); ctx.stroke(); });
+            ctx.strokeStyle = '#f00'; enemyBullets.forEach(b => { ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x, b.y + 12); ctx.stroke(); });
+            
+            // 畫粒子
+            particles.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 3, 3); });
+            ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+        }
+
+        function isColliding(r1, r2) {
+            const w1 = r1.width || 2; const h1 = r1.height || 10;
+            return r1.x < r2.x + r2.width && r1.x + w1 > r2.x && r1.y < r2.y + r2.height && r1.y + h1 > r2.y;
+        }
+
+        function nextLevel() {
+            if (currentLevel < 3) {
+                isTransitioning = true;
+                currentLevel++;
+                levelMsg.innerText = "LEVEL " + currentLevel;
+                levelMsg.style.opacity = 1;
+                setTimeout(() => {
+                    levelMsg.style.opacity = 0;
+                    levelEl.innerText = currentLevel;
+                    initEnemies(currentLevel);
+                    playerBullets = []; enemyBullets = [];
+                    isTransitioning = false;
+                }, 2000);
+            } else {
+                gameRunning = false;
+                statusTitle.innerText = isDemoMode ? "DEMO 完成" : "任務大成功";
+                statusTitle.style.color = "#0ff";
+                statusDesc.innerText = "最終分數: " + score;
+                overlay.classList.remove('hidden');
+            }
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            statusTitle.innerText = "火箭墜毀";
+            statusTitle.style.color = "#f00";
+            statusDesc.innerText = `你在第 ${currentLevel} 關失敗了\n總分: ${score}`;
+            overlay.classList.remove('hidden');
+            pauseBtn.classList.add('hidden');
+        }
+
+        function togglePause() {
+            if (!gameRunning || isTransitioning) return;
+            isPaused = !isPaused;
+            pauseIndicator.classList.toggle('hidden', !isPaused);
+            pauseBtn.innerText = isPaused ? "繼續 (P)" : "暫停 (P)";
+        }
+
+        function startGame(demo = false) {
+            score = 0; lives = 3; currentLevel = 1;
+            isDemoMode = demo;
+            scoreEl.innerText = score; livesEl.innerText = lives; levelEl.innerText = 1;
+            playerBullets = []; enemyBullets = []; particles = [];
+            player.x = canvas.width / 2 - 20;
+            initEnemies(1);
+            gameRunning = true; isPaused = false;
+            overlay.classList.add('hidden');
+            pauseBtn.classList.remove('hidden');
+            demoIndicator.classList.toggle('hidden', !demo);
+            update();
+        }
+
+        startBtn.onclick = () => startGame(false);
+        demoBtn.onclick = () => startGame(true);
+        pauseBtn.onclick = togglePause;
+        window.addEventListener('keydown', e => {
+            if (e.code === 'KeyP') togglePause();
+            if (e.code === 'Space' && gameRunning && !isPaused && !isTransitioning && !isDemoMode) shoot();
+            keys[e.code] = true;
+        });
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        draw();
+    </script>
+</body>
+</html>
